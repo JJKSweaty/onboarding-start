@@ -3,10 +3,16 @@
 
 import cocotb
 from cocotb.clock import Clock
-from cocotb.triggers import RisingEdge
 from cocotb.triggers import ClockCycles
+from cocotb.triggers import RisingEdge
 from cocotb.types import Logic
 from cocotb.types import LogicArray
+
+CLK_PERIOD_NS = 100
+PWM_MIN_FREQ_HZ = 2970
+PWM_MAX_FREQ_HZ = 3030
+PWM_PERIOD_NS = 13 * 256 * CLK_PERIOD_NS
+PWM_PERIOD_CYCLES = 13 * 256
 
 async def await_half_sclk(dut):
     """Wait for the SCLK signal to go high or low."""
@@ -83,12 +89,9 @@ async def send_spi_transaction(dut, r_w, address, data):
     await ClockCycles(dut.clk, 600)
     return ui_in_logicarray(ncs, bit, sclk)
 
-@cocotb.test()
-async def test_spi(dut):
-    dut._log.info("Start SPI test")
-
+async def reset_dut(dut):
     # Set the clock period to 100 ns (10 MHz)
-    clock = Clock(dut.clk, 100, units="ns")
+    clock = Clock(dut.clk, CLK_PERIOD_NS, units="ns")
     cocotb.start_soon(clock.start())
 
     # Reset
@@ -102,6 +105,44 @@ async def test_spi(dut):
     await ClockCycles(dut.clk, 5)
     dut.rst_n.value = 1
     await ClockCycles(dut.clk, 5)
+
+async def setup_pwm_output(dut, duty_cycle):
+    await send_spi_transaction(dut, 1, 0x00, 0x01)  # Drive lower output bit 0 high
+    await send_spi_transaction(dut, 1, 0x02, 0x01)  # Enable PWM on lower output bit 0
+    await send_spi_transaction(dut, 1, 0x04, duty_cycle)
+    await ClockCycles(dut.clk, 100)
+
+def uo_out_bit0(dut):
+    return int(dut.uo_out.value) & 1
+
+async def wait_uo0_transition(dut, target_value, timeout_cycles=2 * PWM_PERIOD_CYCLES):
+    previous = uo_out_bit0(dut)
+    for _ in range(timeout_cycles):
+        await RisingEdge(dut.clk)
+        current = uo_out_bit0(dut)
+        if previous != target_value and current == target_value:
+            return cocotb.utils.get_sim_time(units="ns")
+        previous = current
+    raise AssertionError(f"Timed out waiting for uo_out[0] to transition to {target_value}")
+
+async def measure_pwm_period_ns(dut):
+    first_rising = await wait_uo0_transition(dut, 1)
+    second_rising = await wait_uo0_transition(dut, 1)
+    return second_rising - first_rising
+
+async def measure_pwm_duty_percent(dut):
+    rising_time = await wait_uo0_transition(dut, 1)
+    falling_time = await wait_uo0_transition(dut, 0)
+    next_rising_time = await wait_uo0_transition(dut, 1)
+
+    high_time = falling_time - rising_time
+    period = next_rising_time - rising_time
+    return (high_time / period) * 100
+
+@cocotb.test()
+async def test_spi(dut):
+    dut._log.info("Start SPI test")
+    await reset_dut(dut)
 
     dut._log.info("Test project behavior")
     dut._log.info("Write transaction, address 0x00, data 0xF0")
@@ -151,11 +192,35 @@ async def test_spi(dut):
 
 @cocotb.test()
 async def test_pwm_freq(dut):
-    # Write your test here
-    dut._log.info("PWM Frequency test completed successfully")
+    await reset_dut(dut)
+    await setup_pwm_output(dut, 0x80)
+
+    period_ns = await measure_pwm_period_ns(dut)
+    frequency_hz = 1_000_000_000 / period_ns
+
+    assert PWM_MIN_FREQ_HZ <= frequency_hz <= PWM_MAX_FREQ_HZ, (
+        f"Expected PWM frequency between {PWM_MIN_FREQ_HZ} Hz and "
+        f"{PWM_MAX_FREQ_HZ} Hz, got {frequency_hz:.2f} Hz"
+    )
+    dut._log.info(f"PWM frequency: {frequency_hz:.2f} Hz")
 
 
 @cocotb.test()
 async def test_pwm_duty(dut):
-    # Write your test here
-    dut._log.info("PWM Duty Cycle test completed successfully")
+    await reset_dut(dut)
+
+    await setup_pwm_output(dut, 0x00)
+    for _ in range(PWM_PERIOD_CYCLES):
+        await RisingEdge(dut.clk)
+        assert uo_out_bit0(dut) == 0, "Expected 0% duty cycle to stay low"
+
+    await setup_pwm_output(dut, 0x80)
+    duty_percent = await measure_pwm_duty_percent(dut)
+    assert 49 <= duty_percent <= 51, f"Expected 50% duty cycle, got {duty_percent:.2f}%"
+
+    await setup_pwm_output(dut, 0xFF)
+    for _ in range(PWM_PERIOD_CYCLES):
+        await RisingEdge(dut.clk)
+        assert uo_out_bit0(dut) == 1, "Expected 100% duty cycle to stay high"
+
+    dut._log.info(f"PWM duty cycle at 0x80: {duty_percent:.2f}%")
