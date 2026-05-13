@@ -21,27 +21,12 @@ localparam [6:0] MAX_ADDRESS = 7'h04;
 
     // SPI transaction registers
     reg transaction_active;
+
     reg [4:0] bit_count;
     reg [15:0] shift_reg;
 
     // Internal registers
     reg [7:0] reg0, reg1, reg2, reg3, reg4;
-
-    wire sclk_s = sclk_sync_1;
-    wire ncs_s  = ncs_sync_1;
-    wire copi_s = copi_sync_1;
-
-    wire sclk_rising = sclk_s && !sclk_prev;
-    wire ncs_rising  = ncs_s && !ncs_prev;
-    wire ncs_falling = !ncs_s && ncs_prev;
-
-    wire rw_bit = shift_reg[15];
-    wire [6:0] addr = shift_reg[14:8];
-    wire [7:0] data = shift_reg[7:0];
-
-    wire valid_write = (rw_bit == 1'b0);
-    wire valid_address = (addr <= MAX_ADDRESS);
-
     //sync setup
     always @(posedge clk)begin
         sclk_sync_0<=sclk;
@@ -88,9 +73,36 @@ localparam [6:0] MAX_ADDRESS = 7'h04;
         end
     end
 end
+wire rw_bit = shift_reg[15];
+wire [6:0] addr = shift_reg[14:8];
+wire [7:0] data = shift_reg[7:0];
+wire valid_write = (rw_bit == 1'b0);
+wire valid_address = (addr <= MAX_ADDRESS);
+wire transaction_ready;
+
+assign transaction_ready =ncs_rising &&(bit_count == 5'd16) && valid_write && valid_address;
+
+always @(posedge clk)begin 
+    if (transaction_ready) begin
+        case (addr)
+            7'h00: reg0 <= data;
+            7'h01: reg1 <= data;
+            7'h02: reg2 <= data;
+            7'h03: reg3 <= data;
+            7'h04: reg4 <= data;
+            default: ;
+        endcase
+        
+    end else if (reset)begin
+        reg0 <= 8'd0;
+        reg1 <= 8'd0;
+        reg2 <= 8'd0;
+        reg3 <= 8'd0;
+        reg4 <= 8'd0;
+    end
+end
+        
 
         
 
-
-
-    endmodule
+endmodule
