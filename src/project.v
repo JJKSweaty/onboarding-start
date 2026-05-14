@@ -28,7 +28,7 @@ module tt_um_uwasic_onboarding_Jonathan_Jacob_Koshy (
   // ui_in[0] = SPI SCLK, ui_in[1] = SPI COPI/MOSI, ui_in[2] = SPI nCS
   spi_peripheral spi_peripheral_inst (
     .clk(clk),
-    .reset(!rst_n),
+    .rst_n(rst_n),
     .sclk(ui_in[0]),
     .ncs(ui_in[2]),
     .copi(ui_in[1]),
