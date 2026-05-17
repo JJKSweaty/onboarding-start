@@ -4,7 +4,6 @@
  */
 
 `default_nettype none
-`timescale 1ns / 1ps
 
 module pwm_peripheral (
     input  wire       clk,      // clock
