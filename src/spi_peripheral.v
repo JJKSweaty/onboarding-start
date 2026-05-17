@@ -1,4 +1,5 @@
 `default_nettype none
+`timescale 1ns / 1ps
 
 module spi_peripheral (
     input  wire       clk,
@@ -15,8 +16,6 @@ module spi_peripheral (
     output reg  [7:0] reg4
 );
 
-    localparam [6:0] MAX_ADDRESS = 7'h04;
-
     // Synchronizer registers
     reg sclk_sync_0, sclk_sync_1;
     reg ncs_sync_0,  ncs_sync_1;
@@ -27,11 +26,10 @@ module spi_peripheral (
     reg ncs_prev;
 
     // SPI transaction registers
-    reg transaction_active;
     reg [4:0] bit_count;
     reg [15:0] shift_reg;
 
-    always @(posedge clk) begin
+    always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             sclk_sync_0 <= 1'b0;
             sclk_sync_1 <= 1'b0;
@@ -49,7 +47,7 @@ module spi_peripheral (
         end
     end
 
-    always @(posedge clk) begin
+    always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             sclk_prev <= 1'b0;
             ncs_prev  <= 1'b1;
@@ -62,18 +60,9 @@ module spi_peripheral (
     wire sclk_rising = sclk_sync_1 && !sclk_prev;
     wire ncs_rising  = ncs_sync_1 && !ncs_prev;
     wire ncs_falling = !ncs_sync_1 && ncs_prev;
+    wire transaction_active = !ncs_sync_1;
 
-    always @(posedge clk) begin
-        if (!rst_n) begin
-            transaction_active <= 1'b0;
-        end else if (ncs_falling) begin
-            transaction_active <= 1'b1;
-        end else if (ncs_rising) begin
-            transaction_active <= 1'b0;
-        end
-    end
-
-    always @(posedge clk) begin
+    always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             shift_reg <= 16'd0;
             bit_count <= 5'd0;
@@ -86,14 +75,12 @@ module spi_peripheral (
         end
     end
 
-    wire rw_bit = shift_reg[15];
     wire [6:0] addr = shift_reg[14:8];
     wire [7:0] data = shift_reg[7:0];
-    wire valid_write = (rw_bit == 1'b1);
-    wire valid_address = (addr <= MAX_ADDRESS);
-    wire transaction_ready = ncs_rising && (bit_count == 5'd16) && valid_write && valid_address;
+    wire valid_write = shift_reg[15];
+    wire transaction_ready = ncs_rising && (bit_count == 5'd16) && valid_write;
 
-    always @(posedge clk) begin
+    always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             reg0 <= 8'd0;
             reg1 <= 8'd0;
